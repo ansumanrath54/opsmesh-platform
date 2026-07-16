@@ -1,0 +1,14 @@
+# Kafka Log Logistics
+confluent-kafka==2.4.0
+
+# State Management & Caching
+redis==5.0.4
+
+# Environment Configuration
+python-dotenv==1.0.1
+pydantic==2.7.1
+
+# AI & Orchestration Frameworks (Aligned Patch Versions)
+langchain-core==0.2.5
+langchain-anthropic==0.1.15
+langgraph==0.0.55

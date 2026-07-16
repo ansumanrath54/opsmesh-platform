@@ -1,0 +1,6 @@
+/Volumes/T7 Shield/opsmesh-platform/gateway-ingress-engine/src/main/java/com/opsmesh/gateway/model/TelemetryLogPayload.java
+/Volumes/T7 Shield/opsmesh-platform/gateway-ingress-engine/src/main/java/com/opsmesh/gateway/config/DatabaseInitializer.java
+/Volumes/T7 Shield/opsmesh-platform/gateway-ingress-engine/src/main/java/com/opsmesh/gateway/config/KafkaProducerService.java
+/Volumes/T7 Shield/opsmesh-platform/gateway-ingress-engine/src/main/java/com/opsmesh/gateway/config/TelemetryLogConsumer.java
+/Volumes/T7 Shield/opsmesh-platform/gateway-ingress-engine/src/main/java/com/opsmesh/gateway/GatewayApplication.java
+/Volumes/T7 Shield/opsmesh-platform/gateway-ingress-engine/src/main/java/com/opsmesh/gateway/controller/TelemetryIngressController.java
