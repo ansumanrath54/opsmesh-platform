@@ -1,6 +1,6 @@
 import os
 import logging
-from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer, JSON, text
+from sqlalchemy import create_engine, Column, String, Text, DateTime, Integer, ARRAY, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 
@@ -14,9 +14,9 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-class IncidentRecord(Base):
-    """SQLAlchemy model for persistent logging of AI-remediated events."""
-    __tablename__ = 'incident_logs'
+class EventRecord(Base):
+    """SQLAlchemy model for persistent logging of AI-remediated telemetry events."""
+    __tablename__ = 'incident_logs' # 🟢 Keeps structural binding to existing table intact
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -24,7 +24,7 @@ class IncidentRecord(Base):
     log_text = Column(Text, nullable=False)
     classification = Column(String(100))
     severity = Column(String(20))
-    remediation_steps = Column(JSON)  
+    remediation_steps = Column(ARRAY(String))  # 🟢 Matches the list[str] types expected by endpoints
     status = Column(String(20), default="ACTIVE")
 
 # =====================================================================

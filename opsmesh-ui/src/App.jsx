@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Dynamically reads your Render production domain environment variable or defaults to localhost
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 export default function App() {
   const [metrics, setMetrics] = useState({ totalEvents: 0, criticalTriggers: 0, highAlerts: 0, pipelineStatus: '🟢 Active' });
-  const [incidents, setIncidents] = useState([]);
-  const [selectedIncident, setSelectedIncident] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [selectedEvent, setSelectedEvent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [inspectLoading, setInspectLoading] = useState(false);
@@ -14,20 +17,21 @@ export default function App() {
 
   const inspectorPanelRef = useRef(null);
 
+  // Ingest boundary: pulls real-time metric aggregations and active triage row feeds
   const fetchOpsMeshData = async () => {
     try {
-      const [metricsRes, incidentsRes] = await Promise.all([
-        fetch('http://localhost:8000/api/metrics'),
-        fetch('http://localhost:8000/api/incidents')
+      const [metricsRes, eventsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/metrics`),
+        fetch(`${API_BASE_URL}/api/events`) // 🟢 Updated contract string from /api/incidents
       ]);
 
-      if (!metricsRes.ok || !incidentsRes.ok) throw new Error('Network response failure.');
+      if (!metricsRes.ok || !eventsRes.ok) throw new Error('Network response failure.');
 
       const metricsData = await metricsRes.json();
-      const incidentsData = await incidentsRes.json();
+      const eventsData = await eventsRes.json();
 
       setMetrics(metricsData);
-      setIncidents(incidentsData);
+      setEvents(eventsData);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -36,17 +40,18 @@ export default function App() {
     }
   };
 
-  const handleInspectClick = async (incidentId) => {
+  // Diagnostic Sub-Agent execution selector logic mapping
+  const handleInspectClick = async (eventId) => {
     setInspectLoading(true);
     setTerminalLogs([]);
     setScriptRunFinished(false);
     try {
-      const response = await fetch(`http://localhost:8000/api/incidents/${incidentId}/inspect`, {
+      const response = await fetch(`${API_BASE_URL}/api/events/${eventId}/inspect`, { // 🟢 Updated contract string from /api/incidents
         method: 'POST'
       });
-      if (!response.ok) throw new Error('Failed to run sub-agent diagnostic workflows.');
+      if (!response.ok) throw new Error('Failed to run sub-agent dynamic diagnostic workflows.');
       const deepDiveData = await response.json();
-      setSelectedIncident(deepDiveData);
+      setSelectedEvent(deepDiveData);
       
       setTimeout(() => {
         if (inspectorPanelRef.current) {
@@ -56,27 +61,26 @@ export default function App() {
     } catch (err) {
       setError(`Diagnostic Agent Failure: ${err.message}`);
     } finally {
-      // 🔧 The typo "medical finally" has been cleanly resolved back to standard JS syntax here
       setInspectLoading(false);
     }
   };
 
-  // Step 1: Fire scripts locally against cluster targets
+  // Operations Tier 1 Playbook Automation Execution Engine
   const runRemediationScripts = async () => {
     setIsExecuting(true);
     setScriptRunFinished(false);
     setTerminalLogs(["[System] Connecting to shell runner container pipeline engine..."]);
     
     try {
-      const response = await fetch(`http://localhost:8000/api/incidents/${selectedIncident.id}/execute-remediation`, {
+      const response = await fetch(`${API_BASE_URL}/api/events/${selectedEvent.id}/execute-remediation`, { // 🟢 Updated contract string from /api/incidents
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ remediation_steps: selectedIncident.remediation_steps })
+        body: JSON.stringify({ remediation_steps: selectedEvent.remediation_steps })
       });
       
       const data = await response.json();
       setTerminalLogs(data.logs || ["[Error] No diagnostic terminal outputs returned."]);
-      setScriptRunFinished(true); // Unlocks the manual human resolution approval gate button
+      setScriptRunFinished(true); // Unlocks manual confirmation approval validation tier gate
     } catch (err) {
       setError(`Script execution loop failed: ${err.message}`);
     } finally {
@@ -84,21 +88,21 @@ export default function App() {
     }
   };
 
-  // Step 2: Human Manual Verification Gate (Closes ticket context boundary entirely)
-  const markIncidentAsResolved = async () => {
+  // Operations Tier 2: Manual Human Verification Resolution Gate Configuration
+  const markEventAsResolved = async () => {
     setIsResolving(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/incidents/${selectedIncident.id}/resolve`, {
+      const response = await fetch(`${API_BASE_URL}/api/events/${selectedEvent.id}/resolve`, { // 🟢 Updated contract string from /api/incidents
         method: 'POST'
       });
       
       if (!response.ok) throw new Error('Failed to post resolution state token to database ledger.');
       
-      // Clean target variables workspace data layout on success
-      setSelectedIncident(null);
+      // Clear tracking variables layout on transaction status success
+      setSelectedEvent(null);
       setTerminalLogs([]);
       setScriptRunFinished(false);
-      fetchOpsMeshData(); // Instantly update dashboard metrics configurations
+      fetchOpsMeshData(); // Re-trigger live aggregation metrics loop calculations
     } catch (err) {
       setError(`Resolution confirmation failed: ${err.message}`);
     } finally {
@@ -112,7 +116,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  if (loading && incidents.length === 0) {
+  if (loading && events.length === 0) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0f172a', color: '#fff' }}>
         <h3>Initializing OpsMesh Interface Nodes...</h3>
@@ -158,7 +162,7 @@ export default function App() {
       {/* Primary Triage Ledger Feed Grid */}
       <section style={{ marginBottom: '2.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-          <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0, color: '#e2e8f0' }}>📋 Active Incident Triage Feed</h3>
+          <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0, color: '#e2e8f0' }}>📋 Active Event Triage Feed</h3>
           {inspectLoading && <span style={{ color: '#38bdf8', fontSize: '0.9rem', fontWeight: 'bold' }}>⚡ Sub-Agent orchestrating analytics...</span>}
         </div>
         <div style={{ overflowX: 'auto', backgroundColor: '#1e293b', borderRadius: '0.75rem', border: '1px solid #334155' }}>
@@ -173,25 +177,25 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {incidents.map((incident) => {
-                const isCritical = incident.severity === 'CRITICAL';
-                const isHigh = incident.severity === 'HIGH';
-                let rowBg = selectedIncident?.id === incident.id ? '#2563eb4f' : 'transparent';
+              {events.map((event) => {
+                const isCritical = event.severity === 'CRITICAL';
+                const isHigh = event.severity === 'HIGH';
+                let rowBg = selectedEvent?.id === event.id ? '#2563eb4f' : 'transparent';
 
                 return (
-                  <tr key={incident.id} style={{ borderBottom: '1px solid #334155', backgroundColor: rowBg, transition: 'background-color 0.2s' }}>
-                    <td style={{ padding: '1rem', fontSize: '0.9rem', color: '#cbd5e1' }}>{new Date(incident.timestamp).toLocaleString()}</td>
-                    <td style={{ padding: '1rem', fontWeight: '600' }}>{incident.service_name}</td>
+                  <tr key={event.id} style={{ borderBottom: '1px solid #334155', backgroundColor: rowBg, transition: 'background-color 0.2s' }}>
+                    <td style={{ padding: '1rem', fontSize: '0.9rem', color: '#cbd5e1' }}>{new Date(event.timestamp).toLocaleString()}</td>
+                    <td style={{ padding: '1rem', fontWeight: '600' }}>{event.service_name}</td>
                     <td style={{ padding: '1rem' }}>
                       <span style={{ 
                         padding: '0.25rem 0.6rem', borderRadius: '0.25rem', fontSize: '0.75rem', fontWeight: 'bold',
                         backgroundColor: isCritical ? '#7f1d1d' : isHigh ? '#7c2d12' : '#1e3a8a',
                         color: isCritical ? '#fca5a5' : isHigh ? '#fed7aa' : '#bfdbfe'
-                      }}>{incident.severity}</span>
+                      }}>{event.severity}</span>
                     </td>
-                    <td style={{ padding: '1rem', color: '#94a3b8' }}>{incident.classification}</td>
+                    <td style={{ padding: '1rem', color: '#94a3b8' }}>{event.classification}</td>
                     <td style={{ padding: '1rem', textAlign: 'right' }}>
-                      <button onClick={() => handleInspectClick(incident.id)} style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '0.4rem 0.8rem', borderRadius: '0.375rem', cursor: 'pointer', fontWeight: '500' }}>
+                      <button onClick={() => handleInspectClick(event.id)} style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '0.4rem 0.8rem', borderRadius: '0.375rem', cursor: 'pointer', fontWeight: '500' }}>
                         Inspect
                       </button>
                     </td>
@@ -204,11 +208,11 @@ export default function App() {
       </section>
 
       {/* Dynamic Sub-Agent Diagnostic Workspace Panel Display */}
-      {selectedIncident && (
+      {selectedEvent && (
         <section ref={inspectorPanelRef} style={{ borderTop: '2px solid #38bdf8', paddingTop: '2rem', marginTop: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0, color: '#38bdf8' }}>🔍 Deep Cognitive Inspector Layer</h3>
-            <button onClick={() => setSelectedIncident(null)} style={{ backgroundColor: '#334155', border: 'none', color: '#cbd5e1', padding: '0.4rem 0.8rem', borderRadius: '0.375rem', cursor: 'pointer' }}>
+            <button onClick={() => setSelectedEvent(null)} style={{ backgroundColor: '#334155', border: 'none', color: '#cbd5e1', padding: '0.4rem 0.8rem', borderRadius: '0.375rem', cursor: 'pointer' }}>
               Clear Workspace Selection
             </button>
           </div>
@@ -216,30 +220,30 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             
             {/* Top Workspace Bar: Sub-Agent Structural Metrics */}
-            {selectedIncident.metrics && (
+            {selectedEvent.metrics && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', backgroundColor: '#131d31', padding: '1.25rem', borderRadius: '0.75rem', border: '1px solid #1e293b' }}>
                 <div>
                   <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Sub-Agent Health Check</div>
                   <span style={{ 
                     display: 'inline-block', marginTop: '0.25rem', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.85rem', fontWeight: 'bold',
-                    backgroundColor: selectedIncident.metrics.system_status === 'CRITICAL' ? '#7f1d1d' : '#7c2d12',
-                    color: selectedIncident.metrics.system_status === 'CRITICAL' ? '#fca5a5' : '#fed7aa'
-                  }}>{selectedIncident.metrics.system_status}</span>
+                    backgroundColor: selectedEvent.metrics.system_status === 'CRITICAL' ? '#7f1d1d' : '#7c2d12',
+                    color: selectedEvent.metrics.system_status === 'CRITICAL' ? '#fca5a5' : '#fed7aa'
+                  }}>{selectedEvent.metrics.system_status}</span>
                 </div>
                 <div>
                   <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Resource Saturation</div>
-                  <div style={{ fontSize: '1.35rem', fontWeight: 'bold', marginTop: '0.25rem', color: selectedIncident.metrics.saturation_pct >= 90 ? '#f87171' : '#fb923c' }}>
-                    {selectedIncident.metrics.saturation_pct}%
+                  <div style={{ fontSize: '1.35rem', fontWeight: 'bold', marginTop: '0.25rem', color: selectedEvent.metrics.saturation_pct >= 90 ? '#f87171' : '#fb923c' }}>
+                    {selectedEvent.metrics.saturation_pct}%
                   </div>
                 </div>
                 <div>
                   <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Downstream Latency</div>
-                  <div style={{ fontSize: '1.35rem', fontWeight: 'bold', marginTop: '0.25rem', color: '#f87171' }}>+{selectedIncident.metrics.downstream_latency_ms}ms</div>
+                  <div style={{ fontSize: '1.35rem', fontWeight: 'bold', marginTop: '0.25rem', color: '#f87171' }}>+{selectedEvent.metrics.downstream_latency_ms}ms</div>
                 </div>
                 <div>
                   <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Blast Radius Impact</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.35rem' }}>
-                    {selectedIncident.metrics.blast_radius ? selectedIncident.metrics.blast_radius.map((srv, idx) => (
+                    {selectedEvent.metrics.blast_radius ? selectedEvent.metrics.blast_radius.map((srv, idx) => (
                       <span key={idx} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', color: '#cbd5e1', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.75rem', fontFamily: 'monospace' }}>
                         {srv}
                       </span>
@@ -254,9 +258,9 @@ export default function App() {
               
               {/* Left Column Focus Zone: System Trace Log */}
               <div style={{ backgroundColor: '#1e293b', padding: '1.5rem', borderRadius: '0.75rem', border: '1px solid #334155' }}>
-                <h4 style={{ margin: '0 0 1rem 0', color: '#38bdf8', fontSize: '1.1rem' }}>Raw Error Signature ({selectedIncident.service_name})</h4>
+                <h4 style={{ margin: '0 0 1rem 0', color: '#38bdf8', fontSize: '1.1rem' }}>Raw Error Signature ({selectedEvent.service_name})</h4>
                 <pre style={{ backgroundColor: '#0f172a', padding: '1rem', borderRadius: '0.5rem', overflowX: 'auto', color: '#f87171', fontFamily: 'monospace', fontSize: '0.9rem', border: '1px solid #1e293b', whiteSpace: 'pre-wrap' }}>
-                  {selectedIncident.log_text}
+                  {selectedEvent.log_text}
                 </pre>
               </div>
 
@@ -266,12 +270,12 @@ export default function App() {
                   <h4 style={{ margin: '0 0 1rem 0', color: '#4ade80', fontSize: '1.1rem' }}>🤖 Gemini Remediation Blueprint</h4>
                   <div style={{ marginBottom: '1rem' }}>
                     <span style={{ color: '#94a3b8', fontSize: '0.9rem' }}>AI Classification Route: </span>
-                    <span style={{ fontWeight: '600', color: '#f1f5f9' }}>{selectedIncident.classification}</span>
+                    <span style={{ fontWeight: '600', color: '#f1f5f9' }}>{selectedEvent.classification}</span>
                   </div>
                   <div style={{ color: '#e2e8f0', fontWeight: '600', marginBottom: '0.5rem', fontSize: '0.95rem' }}>Recommended Execution Sequences:</div>
                   <ul style={{ listStyleType: 'none', padding: 0, margin: 0 }}>
-                    {Array.isArray(selectedIncident.remediation_steps) ? (
-                      selectedIncident.remediation_steps.map((step, index) => (
+                    {Array.isArray(selectedEvent.remediation_steps) ? (
+                      selectedEvent.remediation_steps.map((step, index) => (
                         <li key={index} style={{ display: 'flex', alignItems: 'flex-start', marginBottom: '0.75rem', backgroundColor: '#0f172a', padding: '0.75rem', borderRadius: '0.375rem', border: '1px solid #334155' }}>
                           <span style={{ backgroundColor: '#22c55e', color: '#0f172a', fontWeight: 'bold', borderRadius: '50%', minWidth: '1.25rem', height: '1.25rem', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.75rem', marginRight: '0.75rem', marginTop: '0.1rem' }}>
                             {index + 1}
@@ -280,7 +284,7 @@ export default function App() {
                         </li>
                       ))
                     ) : (
-                      <li style={{ fontFamily: 'monospace', color: '#cbd5e1' }}>{String(selectedIncident.remediation_steps)}</li>
+                      <li style={{ fontFamily: 'monospace', color: '#cbd5e1' }}>{String(selectedEvent.remediation_steps)}</li>
                     )}
                   </ul>
 
@@ -313,7 +317,7 @@ export default function App() {
                   {/* TIER 2: MANUAL HUMAN CONFIRMATION VERIFICATION GATE */}
                   {scriptRunFinished && (
                     <button
-                      onClick={markIncidentAsResolved}
+                      onClick={markEventAsResolved}
                       disabled={isResolving}
                       style={{
                         width: '100%', padding: '0.75rem', borderRadius: '0.5rem', border: 'none', fontWeight: 'bold', fontSize: '0.95rem', cursor: isResolving ? 'not-allowed' : 'pointer', transition: 'all 0.2s',

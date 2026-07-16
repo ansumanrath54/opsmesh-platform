@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import time
 from fastapi import FastAPI, HTTPException
@@ -31,6 +32,12 @@ app.add_middleware(
 class ExecutionRequest(BaseModel):
     remediation_steps: list[str]
 
+# Input schema validation structure for direct telemetry mock generation
+class EventCreateRequest(BaseModel):
+    service_name: str
+    severity: str
+    log_text: str
+
 # =====================================================================
 # METRICS COMPUTE BOUNDARY
 # =====================================================================
@@ -61,8 +68,8 @@ def get_opsmesh_metrics():
 # =====================================================================
 # LEDGER INGEST BOUNDARY
 # =====================================================================
-@app.get("/api/incidents")
-def get_all_incidents():
+@app.get("/api/events")
+def get_all_events():
     """Fetches the active telemetry ledger structured chronologically."""
     query = text("SELECT * FROM incident_logs WHERE status = 'ACTIVE' ORDER BY timestamp DESC")
     try:
@@ -86,17 +93,63 @@ def get_all_incidents():
         raise HTTPException(status_code=500, detail=f"Ledger extraction failure: {str(e)}")
 
 # =====================================================================
+# LEDGER INJECTION BOUNDARY
+# =====================================================================
+@app.post("/api/events")
+def create_mock_event(payload: EventCreateRequest):
+    """Direct injector endpoint to create custom severity logging contexts for verification demos."""
+    insert_query = text("""
+        INSERT INTO incident_logs (service_name, severity, log_text, classification, status, remediation_steps, timestamp)
+        VALUES (:service, :sev, :log, :class, 'ACTIVE', :steps, NOW())
+    """)
+    
+    log_upper = payload.log_text.upper()
+    classification = "Unclassified Operational Alert"
+    remediation_steps = ["Inspect application log streams manually."]
+    
+    if "REDIS" in log_upper:
+        classification = "Redis Eviction Warning (Memory Pressure)" if payload.severity.upper() == "MEDIUM" else "Redis Connection Pool Exhaustion Anomaly"
+        remediation_steps = [
+            "redis-cli -h localhost -p 6379 CONFIG SET maxclients 20000",
+            "redis-cli CLIENT KILL TYPE normal",
+            "kubectl rollout restart deployment/redis-cluster-node"
+        ]
+    elif "POSTGRES" in log_upper or "DB_" in log_upper or "DATABASE" in log_upper:
+        classification = "Relational DB Pool Connection Timeout"
+        remediation_steps = [
+            "psql -U postgres -d opsmesh -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE age(clock_timestamp() - query_start) > interval '5 minutes';\"",
+            "kubectl scale deployment/postgres-cluster-pool --replicas=3"
+        ]
+        
+    try:
+        with engine.connect() as conn:
+            conn.execute(insert_query, {
+                "service": payload.service_name,
+                "sev": payload.severity.upper(),
+                "log": payload.log_text,
+                "class": classification,
+                # 🟢 Crucial Fix: Serialize list data to a JSON string payload mapping context
+                "steps": json.dumps(remediation_steps) 
+            })
+            conn.commit()
+        logger.info(f"➕ Successfully injected mock event alert context for service: {payload.service_name}")
+        return {"status": "SUCCESS", "message": "Telemetry anomaly successfully appended to the active triage ledger."}
+    except Exception as e:
+        logger.error(f"Failed to inject direct ledger record: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database record injection failure: {str(e)}")
+    
+# =====================================================================
 # DEEP-DIVE DIAGNOSTIC WORKFLOW NODE
 # =====================================================================
-@app.post("/api/incidents/{incident_id}/inspect")
-def inspect_incident_deep_dive(incident_id: int):
+@app.post("/api/events/{event_id}/inspect")
+def inspect_event_deep_dive(event_id: int):
     """Triggers the LangGraph diagnostic sub-agent execution ring for a specific telemetry row."""
     fetch_query = text("SELECT * FROM incident_logs WHERE id = :id AND status = 'ACTIVE'")
     try:
         with engine.connect() as conn:
-            row = conn.execute(fetch_query, {"id": incident_id}).mappings().fetchone()
+            row = conn.execute(fetch_query, {"id": event_id}).mappings().fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="Selected active incident row not found.")
+                raise HTTPException(status_code=404, detail="Selected active telemetry event row not found.")
             
             initial_diag_state = DiagnosticState(
                 incident_id=row["id"],
@@ -129,8 +182,8 @@ def inspect_incident_deep_dive(incident_id: int):
 # =====================================================================
 # DECOUPLED OPERATIONS TIER 1: HIGH-FIDELITY SIMULATION RUNNER
 # =====================================================================
-@app.post("/api/incidents/{incident_id}/execute-remediation")
-def execute_remediation_logs(incident_id: int, request: ExecutionRequest):
+@app.post("/api/events/{event_id}/execute-remediation")
+def execute_remediation_logs(event_id: int, request: ExecutionRequest):
     """Intercepts blueprint steps and generates high-fidelity production terminal log simulations."""
     terminal_outputs = []
     
@@ -138,7 +191,6 @@ def execute_remediation_logs(incident_id: int, request: ExecutionRequest):
     time.sleep(1.2)
 
     for command in request.remediation_steps:
-        # Base string normalization
         cmd_clean = command.strip()
         
         # 1. Catch Text Fallbacks
@@ -178,7 +230,6 @@ def execute_remediation_logs(incident_id: int, request: ExecutionRequest):
             stdout = f"Execution profile status tracking completed: process returned exit code 0"
             stderr = ""
 
-        # Format output matching authentic server terminal output parameters
         output_format = f"$ {cmd_clean}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
         terminal_outputs.append(output_format)
 
@@ -187,17 +238,17 @@ def execute_remediation_logs(incident_id: int, request: ExecutionRequest):
 # =====================================================================
 # DECOUPLED OPERATIONS TIER 2: MANUAL HUMAN VERIFICATION RESOLUTION GATE
 # =====================================================================
-@app.post("/api/incidents/{incident_id}/resolve")
-def human_resolve_incident(incident_id: int):
+@app.post("/api/events/{event_id}/resolve")
+def human_resolve_event(event_id: int):
     """Explicit manual validation gate. Flips status ledger values to RESOLVED on human approval."""
-    logger.info(f"🔒 Received manual validation confirm flag for incident record: {incident_id}")
+    logger.info(f"🔒 Received manual validation confirm flag for event record: {event_id}")
     update_query = text("UPDATE incident_logs SET status = 'RESOLVED' WHERE id = :id")
     try:
         with engine.connect() as conn:
-            conn.execute(update_query, {"id": incident_id})
+            conn.execute(update_query, {"id": event_id})
             conn.commit()
-            logger.info(f"✅ Incident ledger {incident_id} successfully moved out of active feed matrix.")
-            return {"status": "SUCCESS", "message": f"Incident {incident_id} approved and closed."}
+            logger.info(f"✅ Event ledger {event_id} successfully moved out of active feed matrix.")
+            return {"status": "SUCCESS", "message": f"Event {event_id} approved and closed."}
     except Exception as e:
-        logger.error(f"Failed to update incident resolution state ledger: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to update incident resolution state ledger: {str(e)}")
+        logger.error(f"Failed to update event resolution state ledger: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update event resolution state ledger: {str(e)}")
