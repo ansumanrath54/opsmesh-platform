@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from confluent_kafka import Consumer, KafkaError, KafkaException
+from typing import List, Optional, TypedDict
 from dotenv import load_dotenv
 
 # Import isolated database layout structures cleanly
@@ -100,14 +101,14 @@ agent_graph = workflow.compile()
 # =====================================================================
 # PHASE 5: MICRO-DIAGNOSTIC SUB-GRAPH WORKFLOW
 # =====================================================================
-class DiagnosticState(BaseModel):
+class DiagnosticState(TypedDict):
     incident_id: int
     service_name: str
     log_text: str
-    saturation_pct: int = 0
-    blast_radius: List[str] = Field(default_factory=list)
-    system_status: str = "Unknown"
-    downstream_latency_ms: int = 0
+    saturation_pct: Optional[int]
+    blast_radius: Optional[List[str]]
+    system_status: Optional[str]
+    downstream_latency_ms: Optional[int]
 
 class DiagnosticOutputSchema(BaseModel):
     saturation_pct: int = Field(description="Calculated resource pool saturation percentage")
