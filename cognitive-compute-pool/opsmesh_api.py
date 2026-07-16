@@ -151,31 +151,25 @@ def inspect_event_deep_dive(event_id: int):
             if not row:
                 raise HTTPException(status_code=404, detail="Selected active telemetry event row not found.")
             
-            # 1. Initialize State
-            initial_diag_state = DiagnosticState(
-                incident_id=row["id"],
-                service_name=row["service_name"],
-                log_text=row["log_text"]
-            )
+            # 1. 🟢 PASS A PLAIN DICT (This satisfies LangGraph's state channel validation)
+            graph_output = diagnostic_graph.invoke({
+                "incident_id": row["id"],
+                "service_name": row["service_name"],
+                "log_text": row["log_text"]
+            })
             
-            # 2. Invoke Graph
-            graph_output = diagnostic_graph.invoke(initial_diag_state)
+            # 2. Extract attributes safely from the returned state object
+            saturation_pct = getattr(graph_output, "saturation_pct", 0)
+            system_status = getattr(graph_output, "system_status", "UNKNOWN")
+            blast_radius = getattr(graph_output, "blast_radius", [])
+            downstream_latency_ms = getattr(graph_output, "downstream_latency_ms", 0)
             
-            # 3. 🟢 THE FIX: Safely convert the Graph Output state model to a Python dict
-            if hasattr(graph_output, "model_dump"):
-                analysis_result = graph_output.model_dump()
-            elif hasattr(graph_output, "dict"):
-                analysis_result = graph_output.dict()
-            elif isinstance(graph_output, dict):
-                analysis_result = graph_output
-            else:
-                # Fallback attributes check
-                analysis_result = {
-                    "saturation_pct": getattr(graph_output, "saturation_pct", 0),
-                    "system_status": getattr(graph_output, "system_status", "UNKNOWN"),
-                    "blast_radius": getattr(graph_output, "blast_radius", []),
-                    "downstream_latency_ms": getattr(graph_output, "downstream_latency_ms", 0),
-                }
+            # If graph_output itself returned as a dict, handle key extraction
+            if isinstance(graph_output, dict):
+                saturation_pct = graph_output.get("saturation_pct", 0)
+                system_status = graph_output.get("system_status", "UNKNOWN")
+                blast_radius = graph_output.get("blast_radius", [])
+                downstream_latency_ms = graph_output.get("downstream_latency_ms", 0)
             
             # --- SAFE ARRAY PARSING TIER ---
             raw_steps = row["remediation_steps"]
@@ -198,10 +192,10 @@ def inspect_event_deep_dive(event_id: int):
                 "severity": row["severity"] or "MEDIUM",
                 "remediation_steps": standardized_steps,
                 "metrics": {
-                    "saturation_pct": analysis_result.get("saturation_pct", 0),
-                    "system_status": analysis_result.get("system_status", "UNKNOWN"),
-                    "blast_radius": analysis_result.get("blast_radius", []),
-                    "downstream_latency_ms": analysis_result.get("downstream_latency_ms", 0)
+                    "saturation_pct": saturation_pct,
+                    "system_status": system_status,
+                    "blast_radius": blast_radius,
+                    "downstream_latency_ms": downstream_latency_ms
                 }
             }
     except HTTPException:
@@ -209,7 +203,7 @@ def inspect_event_deep_dive(event_id: int):
     except Exception as e:
         logger.error(f"Sub-agent orchestration routing failure: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Sub-agent orchestration routing failure: {str(e)}")
-    
+        
 # =====================================================================
 # DECOUPLED OPERATIONS TIER 1: HIGH-FIDELITY SIMULATION RUNNER
 # =====================================================================
