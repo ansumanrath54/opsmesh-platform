@@ -143,7 +143,6 @@ def create_mock_event(payload: EventCreateRequest):
 # =====================================================================
 @app.post("/api/events/{event_id}/inspect")
 def inspect_event_deep_dive(event_id: int):
-    """Triggers the LangGraph diagnostic sub-agent execution ring for a specific telemetry row."""
     fetch_query = text("SELECT * FROM incident_logs WHERE id = :id AND status = 'ACTIVE'")
     try:
         with engine.connect() as conn:
@@ -156,16 +155,28 @@ def inspect_event_deep_dive(event_id: int):
                 service_name=row["service_name"],
                 log_text=row["log_text"]
             )
-            
             analysis_result = diagnostic_graph.invoke(initial_diag_state)
+            
+            # --- SAFE ARRAY PARSING MATRIX ---
+            raw_steps = row["remediation_steps"]
+            standardized_steps = ["Inspect application log streams manually."]
+            
+            if raw_steps:
+                if isinstance(raw_steps, str):
+                    try:
+                        standardized_steps = json.loads(raw_steps)
+                    except Exception:
+                        standardized_steps = [raw_steps]
+                elif isinstance(raw_steps, list):
+                    standardized_steps = raw_steps
             
             return {
                 "id": row["id"],
                 "service_name": row["service_name"],
                 "log_text": row["log_text"],
-                "classification": row["classification"],
-                "severity": row["severity"],
-                "remediation_steps": row["remediation_steps"],
+                "classification": row["classification"] or "Unclassified Operational Alert",
+                "severity": row["severity"] or "MEDIUM",
+                "remediation_steps": standardized_steps, # 🟢 Guaranteed clean list array sent to React
                 "metrics": {
                     "saturation_pct": analysis_result.get("saturation_pct"),
                     "system_status": analysis_result.get("system_status"),
@@ -178,7 +189,7 @@ def inspect_event_deep_dive(event_id: int):
     except Exception as e:
         logger.error(f"Sub-agent orchestration routing failure: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Sub-agent orchestration routing failure: {str(e)}")
-
+    
 # =====================================================================
 # DECOUPLED OPERATIONS TIER 1: HIGH-FIDELITY SIMULATION RUNNER
 # =====================================================================
