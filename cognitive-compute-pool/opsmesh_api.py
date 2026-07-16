@@ -143,6 +143,7 @@ def create_mock_event(payload: EventCreateRequest):
 # =====================================================================
 @app.post("/api/events/{event_id}/inspect")
 def inspect_event_deep_dive(event_id: int):
+    """Triggers the LangGraph diagnostic sub-agent execution ring for a specific telemetry row."""
     fetch_query = text("SELECT * FROM incident_logs WHERE id = :id AND status = 'ACTIVE'")
     try:
         with engine.connect() as conn:
@@ -150,14 +151,33 @@ def inspect_event_deep_dive(event_id: int):
             if not row:
                 raise HTTPException(status_code=404, detail="Selected active telemetry event row not found.")
             
+            # 1. Initialize State
             initial_diag_state = DiagnosticState(
                 incident_id=row["id"],
                 service_name=row["service_name"],
                 log_text=row["log_text"]
             )
-            analysis_result = diagnostic_graph.invoke(initial_diag_state)
             
-            # --- SAFE ARRAY PARSING MATRIX ---
+            # 2. Invoke Graph
+            graph_output = diagnostic_graph.invoke(initial_diag_state)
+            
+            # 3. 🟢 THE FIX: Safely convert the Graph Output state model to a Python dict
+            if hasattr(graph_output, "model_dump"):
+                analysis_result = graph_output.model_dump()
+            elif hasattr(graph_output, "dict"):
+                analysis_result = graph_output.dict()
+            elif isinstance(graph_output, dict):
+                analysis_result = graph_output
+            else:
+                # Fallback attributes check
+                analysis_result = {
+                    "saturation_pct": getattr(graph_output, "saturation_pct", 0),
+                    "system_status": getattr(graph_output, "system_status", "UNKNOWN"),
+                    "blast_radius": getattr(graph_output, "blast_radius", []),
+                    "downstream_latency_ms": getattr(graph_output, "downstream_latency_ms", 0),
+                }
+            
+            # --- SAFE ARRAY PARSING TIER ---
             raw_steps = row["remediation_steps"]
             standardized_steps = ["Inspect application log streams manually."]
             
@@ -176,12 +196,12 @@ def inspect_event_deep_dive(event_id: int):
                 "log_text": row["log_text"],
                 "classification": row["classification"] or "Unclassified Operational Alert",
                 "severity": row["severity"] or "MEDIUM",
-                "remediation_steps": standardized_steps, # 🟢 Guaranteed clean list array sent to React
+                "remediation_steps": standardized_steps,
                 "metrics": {
-                    "saturation_pct": analysis_result.get("saturation_pct"),
-                    "system_status": analysis_result.get("system_status"),
-                    "blast_radius": analysis_result.get("blast_radius"),
-                    "downstream_latency_ms": analysis_result.get("downstream_latency_ms")
+                    "saturation_pct": analysis_result.get("saturation_pct", 0),
+                    "system_status": analysis_result.get("system_status", "UNKNOWN"),
+                    "blast_radius": analysis_result.get("blast_radius", []),
+                    "downstream_latency_ms": analysis_result.get("downstream_latency_ms", 0)
                 }
             }
     except HTTPException:
