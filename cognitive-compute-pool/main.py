@@ -118,7 +118,12 @@ class DiagnosticOutputSchema(BaseModel):
 
 def run_deep_diagnostics(state: DiagnosticState) -> dict:
     client = genai.Client()
-    prompt = f"Perform deep infrastructure diagnostics for {state.service_name} given: {state.log_text}"
+    
+    # 🟢 FIX: Access keys safely using .get() because state is now a TypedDict (dictionary)
+    service_name = state.get("service_name", "Unknown")
+    log_text = state.get("log_text", "")
+    
+    prompt = f"Perform deep infrastructure diagnostics for {service_name} given: {log_text}"
     try:
         response = client.models.generate_content(
             model='gemini-3.5-flash',
@@ -137,9 +142,9 @@ def run_deep_diagnostics(state: DiagnosticState) -> dict:
             "system_status": parsed.system_status.upper(),
             "downstream_latency_ms": parsed.downstream_latency_ms
         }
-    except Exception:
-        # --- INTERVIEW-SAFE DYNAMIC FALLBACK MATRIX ---
-        log_upper = state.log_text.upper()
+    except Exception as fallback_err:
+        logger.warning(f"⚠️ Dynamic fallback triggered. LLM unavailable: {str(fallback_err)}")
+        log_upper = log_text.upper()
         
         # 1. Base Default Values (For standard Medium/Low operational alerts)
         sat = 42
