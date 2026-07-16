@@ -6,7 +6,7 @@ redis==5.0.4
 
 # Environment Configuration
 python-dotenv==1.0.1
-pydantic==2.7.1
+pydantic>=2.9.0
 
 # AI & Orchestration Frameworks (Aligned Patch Versions)
 langchain-core==0.2.5
