@@ -12,3 +12,5 @@ pydantic==2.7.1
 langchain-core==0.2.5
 langchain-anthropic==0.1.15
 langgraph==0.0.55
+
+google-genai>=2.4.0
