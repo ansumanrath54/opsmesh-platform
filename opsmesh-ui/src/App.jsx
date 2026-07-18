@@ -22,7 +22,7 @@ export default function App() {
     try {
       const [metricsRes, eventsRes] = await Promise.all([
         fetch(`${API_BASE_URL}/api/metrics`),
-        fetch(`${API_BASE_URL}/api/events`) // 🟢 Updated contract string from /api/incidents
+        fetch(`${API_BASE_URL}/api/events`)
       ]);
 
       if (!metricsRes.ok || !eventsRes.ok) throw new Error('Network response failure.');
@@ -46,7 +46,7 @@ export default function App() {
     setTerminalLogs([]);
     setScriptRunFinished(false);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/events/${eventId}/inspect`, { // 🟢 Updated contract string from /api/incidents
+      const response = await fetch(`${API_BASE_URL}/api/events/${eventId}/inspect`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to run sub-agent dynamic diagnostic workflows.');
@@ -72,7 +72,7 @@ export default function App() {
     setTerminalLogs(["[System] Connecting to shell runner container pipeline engine..."]);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/events/${selectedEvent.id}/execute-remediation`, { // 🟢 Updated contract string from /api/incidents
+      const response = await fetch(`${API_BASE_URL}/api/events/${selectedEvent.id}/execute-remediation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ remediation_steps: selectedEvent.remediation_steps })
@@ -80,7 +80,7 @@ export default function App() {
       
       const data = await response.json();
       setTerminalLogs(data.logs || ["[Error] No diagnostic terminal outputs returned."]);
-      setScriptRunFinished(true); // Unlocks manual confirmation approval validation tier gate
+      setScriptRunFinished(true);
     } catch (err) {
       setError(`Script execution loop failed: ${err.message}`);
     } finally {
@@ -92,17 +92,16 @@ export default function App() {
   const markEventAsResolved = async () => {
     setIsResolving(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/events/${selectedEvent.id}/resolve`, { // 🟢 Updated contract string from /api/incidents
+      const response = await fetch(`${API_BASE_URL}/api/events/${selectedEvent.id}/resolve`, {
         method: 'POST'
       });
       
       if (!response.ok) throw new Error('Failed to post resolution state token to database ledger.');
       
-      // Clear tracking variables layout on transaction status success
       setSelectedEvent(null);
       setTerminalLogs([]);
       setScriptRunFinished(false);
-      fetchOpsMeshData(); // Re-trigger live aggregation metrics loop calculations
+      fetchOpsMeshData();
     } catch (err) {
       setError(`Resolution confirmation failed: ${err.message}`);
     } finally {
@@ -123,6 +122,12 @@ export default function App() {
       </div>
     );
   }
+
+  // 🟢 Extract the flat root-level variables out of the selected event state payload safely
+  const saturationPct = selectedEvent?.saturation_pct ?? 0;
+  const systemStatus = selectedEvent?.system_status || 'UNKNOWN';
+  const downstreamLatencyMs = selectedEvent?.downstream_latency_ms ?? 0;
+  const blastRadius = selectedEvent?.blast_radius || [];
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#f8fafc', fontFamily: 'system-ui, sans-serif', padding: '2rem' }}>
@@ -150,7 +155,7 @@ export default function App() {
           <div style={{ fontSize: '2rem', fontWeight: 'bold', marginTop: '0.5rem', color: '#ef4444' }}>{metrics.criticalTriggers}</div>
         </div>
         <div style={{ backgroundColor: '#1e293b', padding: '1.5rem', borderRadius: '0.75rem', border: '1px solid #334155', borderLeft: '4px solid #f97316' }}>
-          <div style={{ color: '#f97316', fontSize: '0.875rem', fontWeight: '600', textTransform: 'uppercase' }}>High Alerts</div>
+          <div style={{ color: '#f97316', fontSize: '0.875rem', fontUk: '600', textTransform: 'uppercase' }}>High Alerts</div>
           <div style={{ fontSize: '2rem', fontWeight: 'bold', marginTop: '0.5rem', color: '#f97316' }}>{metrics.highAlerts}</div>
         </div>
         <div style={{ backgroundColor: '#1e293b', padding: '1.5rem', borderRadius: '0.75rem', border: '1px solid #334155' }}>
@@ -210,7 +215,7 @@ export default function App() {
       {/* Dynamic Sub-Agent Diagnostic Workspace Panel Display */}
       {selectedEvent && (
         <section ref={inspectorPanelRef} style={{ borderTop: '2px solid #38bdf8', paddingTop: '2rem', marginTop: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0, color: '#38bdf8' }}>🔍 Deep Cognitive Inspector Layer</h3>
             <button onClick={() => setSelectedEvent(null)} style={{ backgroundColor: '#334155', border: 'none', color: '#cbd5e1', padding: '0.4rem 0.8rem', borderRadius: '0.375rem', cursor: 'pointer' }}>
               Clear Workspace Selection
@@ -219,39 +224,37 @@ export default function App() {
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             
-            {/* Top Workspace Bar: Sub-Agent Structural Metrics */}
-            {selectedEvent.metrics && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', backgroundColor: '#131d31', padding: '1.25rem', borderRadius: '0.75rem', border: '1px solid #1e293b' }}>
-                <div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Sub-Agent Health Check</div>
-                  <span style={{ 
-                    display: 'inline-block', marginTop: '0.25rem', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.85rem', fontWeight: 'bold',
-                    backgroundColor: selectedEvent.metrics.system_status === 'CRITICAL' ? '#7f1d1d' : '#7c2d12',
-                    color: selectedEvent.metrics.system_status === 'CRITICAL' ? '#fca5a5' : '#fed7aa'
-                  }}>{selectedEvent.metrics.system_status}</span>
-                </div>
-                <div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Resource Saturation</div>
-                  <div style={{ fontSize: '1.35rem', fontWeight: 'bold', marginTop: '0.25rem', color: selectedEvent.metrics.saturation_pct >= 90 ? '#f87171' : '#fb923c' }}>
-                    {selectedEvent.metrics.saturation_pct}%
-                  </div>
-                </div>
-                <div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Downstream Latency</div>
-                  <div style={{ fontSize: '1.35rem', fontWeight: 'bold', marginTop: '0.25rem', color: '#f87171' }}>+{selectedEvent.metrics.downstream_latency_ms}ms</div>
-                </div>
-                <div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Blast Radius Impact</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.35rem' }}>
-                    {selectedEvent.metrics.blast_radius ? selectedEvent.metrics.blast_radius.map((srv, idx) => (
-                      <span key={idx} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', color: '#cbd5e1', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.75rem', fontFamily: 'monospace' }}>
-                        {srv}
-                      </span>
-                    )) : 'None'}
-                  </div>
+            {/* 🟢 Top Workspace Bar: Sub-Agent Structural Metrics (Now cleanly mapped to flat fields) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', backgroundColor: '#131d31', padding: '1.25rem', borderRadius: '0.75rem', border: '1px solid #1e293b' }}>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Sub-Agent Health Check</div>
+                <span style={{ 
+                  display: 'inline-block', marginTop: '0.25rem', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.85rem', fontWeight: 'bold',
+                  backgroundColor: systemStatus === 'CRITICAL' ? '#7f1d1d' : systemStatus === 'WARNING' ? '#7c2d12' : '#064e3b',
+                  color: systemStatus === 'CRITICAL' ? '#fca5a5' : systemStatus === 'WARNING' ? '#fed7aa' : '#a7f3d0'
+                }}>{systemStatus}</span>
+              </div>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Resource Saturation</div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 'bold', marginTop: '0.25rem', color: saturationPct >= 90 ? '#f87171' : saturationPct >= 60 ? '#fb923c' : '#4ade80' }}>
+                  {saturationPct}%
                 </div>
               </div>
-            )}
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Downstream Latency</div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 'bold', marginTop: '0.25rem', color: downstreamLatencyMs >= 400 ? '#f87171' : '#cbd5e1' }}>+{downstreamLatencyMs}ms</div>
+              </div>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' }}>Blast Radius Impact</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.35rem' }}>
+                  {blastRadius.length > 0 && blastRadius[0] !== "None Detected" ? blastRadius.map((srv, idx) => (
+                    <span key={idx} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', color: '#cbd5e1', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.75rem', fontFamily: 'monospace' }}>
+                      {srv}
+                    </span>
+                  )) : <span style={{ color: '#64748b', fontSize: '0.85rem', fontStyle: 'italic' }}>None Detected</span>}
+                </div>
+              </div>
+            </div>
 
             {/* Bottom Split Layout Grid Focus Zones */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '2rem' }}>
