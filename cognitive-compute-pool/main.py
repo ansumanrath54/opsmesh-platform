@@ -1,9 +1,11 @@
 import os
 import json
 import logging
+import time
+import requests # 🟢 Added for internal API WebSockets broadcast communication triggers
 from confluent_kafka import Consumer, KafkaError, KafkaException
-from typing import List, Optional, TypedDict
 from dotenv import load_dotenv
+from typing import List, Optional, TypedDict
 
 # Import isolated database layout structures cleanly
 from database import engine, SessionLocal, EventRecord
@@ -13,7 +15,6 @@ from google import genai
 from google.genai import types
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
-from typing import List, Optional
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("OpsMesh.Worker")
@@ -119,7 +120,6 @@ class DiagnosticOutputSchema(BaseModel):
 def run_deep_diagnostics(state: DiagnosticState) -> dict:
     client = genai.Client()
     
-    # 🟢 FIX: Access keys safely using .get() because state is now a TypedDict (dictionary)
     service_name = state.get("service_name", "Unknown")
     log_text = state.get("log_text", "")
     
@@ -200,29 +200,67 @@ diagnostic_graph = diag_workflow.compile()
 # =====================================================================
 # INGESTION BOUNDARY & CONSUMER RUNTIME LOOPS
 # =====================================================================
-def save_event_to_db(service: str, log: str, result: dict):
+def save_event_to_db(service: str, log: str, agent_res: dict, diag_res: dict) -> bool:
+    """Persists enriched results and metrics to DB and dispatches a WebSocket broadcast payload."""
     db = SessionLocal()
     try:
+        # Standardize metric mappings into a dictionary
+        metrics_payload = {
+            "saturation_pct": diag_res.get("saturation_pct", 0),
+            "system_status": diag_res.get("system_status", "UNKNOWN"),
+            "blast_radius": diag_res.get("blast_radius", []),
+            "downstream_latency_ms": diag_res.get("downstream_latency_ms", 0)
+        }
+        
         record = EventRecord(
             service_name=service,
             log_text=log,
-            classification=result.get("classification"),
-            severity=result.get("severity"),
-            remediation_steps=result.get("remediation_steps"),
-            status="ACTIVE"
+            classification=agent_res.get("classification"),
+            severity=agent_res.get("severity"),
+            remediation_steps=agent_res.get("remediation_steps"),
+            status="ACTIVE",
+            metrics=metrics_payload # 🟢 Persistent JSONB mapping integration
         )
         db.add(record)
         db.commit()
-        logger.info("💾 Telemetry event successfully persisted to PostgreSQL archive.")
+        db.refresh(record)
+        logger.info("💾 Enriched telemetry and diagnostics persisted to PostgreSQL archive.")
+        
+        # 🟢 DISPATCH BROADCAST TRIGGER: Push fully enriched entity to the Core API channels
+        try:
+            api_url = os.getenv("API_SERVER_URL", "https://opsmesh-platform.onrender.com")
+            broadcast_payload = {
+                "id": record.id,
+                "timestamp": record.timestamp.isoformat() if record.timestamp else None,
+                "service_name": record.service_name,
+                "log_text": record.log_text,
+                "classification": record.classification,
+                "severity": record.severity,
+                "remediation_steps": record.remediation_steps,
+                "status": record.status,
+                "metrics": metrics_payload
+            }
+            requests.post(f"{api_url}/api/events/broadcast", json=broadcast_payload, timeout=2.0)
+            logger.info("📡 Real-time broadcast dispatched upstream to Core API.")
+        except Exception as ws_err:
+            logger.warning(f"⚠️ WebSocket broadcast skip: {str(ws_err)}")
+
+        return True
     except Exception as e:
-        logger.error(f"Database commit failed: {str(e)}")
+        logger.error(f"❌ Database commit transaction failed: {str(e)}")
         db.rollback()
+        return False
     finally:
         db.close()
 
 def initialize_consumer() -> Consumer:
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    config = {'bootstrap.servers': kafka_servers, 'group.id': 'opsmesh-cognitive-workers', 'auto.offset.reset': 'earliest', 'enable.auto.commit': False}
+    config = {
+        'bootstrap.servers': kafka_servers, 
+        'group.id': 'opsmesh-cognitive-workers', 
+        'auto.offset.reset': 'earliest', 
+        'enable.auto.commit': False
+    }
     try:
         consumer = Consumer(config)
         consumer.subscribe(['telemetry-events'])
@@ -232,31 +270,61 @@ def initialize_consumer() -> Consumer:
         logger.error(f"Failed to initialize Kafka consumer: {str(e)}")
         raise
 
-def process_message(payload_str: str):
+def process_message(payload_str: str) -> bool:
+    """Chains both classification and deep diagnostics graphs sequentially before executing storage workflows."""
     try:
         payload = json.loads(payload_str)
         service_name = payload.get('serviceName', 'Unknown')
         log_text = payload.get('logText')
         if log_text:
-            initial_state = EventState(service_name=service_name, log_text=log_text)
-            result = agent_graph.invoke(initial_state)
-            save_event_to_db(service_name, log_text, result)
+            # 1. Execute primary anomaly parsing
+            initial_event_state = EventState(service_name=service_name, log_text=log_text)
+            agent_result = agent_graph.invoke(initial_event_state)
+            
+            # 2. 🟢 Execute deep diagnostics workflow concurrently during ingestion pass
+            diag_result = diagnostic_graph.invoke({
+                "incident_id": 0, 
+                "service_name": service_name,
+                "log_text": log_text
+            })
+            
+            # 3. Store both outputs cleanly under a single transactional process boundary
+            return save_event_to_db(service_name, log_text, agent_result, diag_result)
+        return True
     except json.JSONDecodeError:
-        logger.error("Failed to parse incoming log payload string to JSON.")
+        logger.error("❌ Failed to parse incoming log payload string to JSON.")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Core worker execution exception: {str(e)}")
+        return False
 
 def start_worker_loop():
     consumer = initialize_consumer()
     try:
         while True:
             msg = consumer.poll(timeout=1.0)
-            if msg is None: continue
+            if msg is None: 
+                continue
             if msg.error():
-                if msg.error().code() == KafkaError._PARTITION_EOF: continue
-                else: raise KafkaException(msg.error())
-            process_message(msg.value().decode('utf-8'))
-            consumer.commit(asynchronous=True)
+                if msg.error().code() == KafkaError._PARTITION_EOF: 
+                    continue
+                else: 
+                    raise KafkaException(msg.error())
+            
+            payload_raw = msg.value().decode('utf-8')
+            success = process_message(payload_raw)
+            
+            if success:
+                try:
+                    consumer.commit(message=msg, asynchronous=False)
+                except KafkaException as commit_err:
+                    logger.error(f"⚠️ Kafka offset commit tracking failure: {str(commit_err)}")
+            else:
+                logger.critical("🚨 Resilient Pipeline Halt: Postponing Kafka offset commit due to write failure.")
+                time.sleep(5.0)
+                
     except KeyboardInterrupt:
-        logger.info("Shutdown signal caught.")
+        logger.info("Shutdown signal caught. Cleaning consumer workspaces.")
     finally:
         consumer.close()
 

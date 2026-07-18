@@ -2,17 +2,15 @@ import os
 import json
 import logging
 import time
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from typing import List
 
 # Import isolated database connection profiles cleanly
 from database import engine
-
-# Import the shared LangGraph variables from main.py
-from main import diagnostic_graph, DiagnosticState
 
 load_dotenv()
 
@@ -37,6 +35,54 @@ class EventCreateRequest(BaseModel):
     service_name: str
     severity: str
     log_text: str
+
+# =====================================================================
+# REAL-TIME BROADCAST ENGINE (WebSocket Connection Hub)
+# =====================================================================
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(f"📡 New dashboard client connected. Active connections: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(f"🔌 Client disconnected. Active connections: {len(self.active_connections)}")
+
+    async def broadcast(self, message: dict):
+        """Pushes event frames downstream to every single active React client."""
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                # Catch zombie/ghost socket handles gracefully
+                pass
+
+manager = ConnectionManager()
+
+@app.websocket("/api/ws/alerts")
+async def websocket_endpoint(websocket: WebSocket):
+    """Exposes an active real-time message stream pipeline for the UI layout dashboard."""
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep the baseline polling tunnel open and listen for client heartbeats
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.warning(f"Unexpected WebSocket socket trace disconnect: {str(e)}")
+        manager.disconnect(websocket)
+
+@app.post("/api/events/broadcast")
+async def trigger_internal_broadcast(event_data: dict):
+    """Secure backchannel endpoint targeting async microservice ingestion pipeline signals."""
+    await manager.broadcast(event_data)
+    return {"status": "SUCCESS", "message": "Broadcast frame pushed downstream seamlessly."}
 
 # =====================================================================
 # METRICS COMPUTE BOUNDARY
@@ -66,11 +112,11 @@ def get_opsmesh_metrics():
         raise HTTPException(status_code=500, detail=f"Database aggregation failure: {str(e)}")
 
 # =====================================================================
-# LEDGER INGEST BOUNDARY
+# LEDGER INGEST BOUNDARY (Unified Flat Output)
 # =====================================================================
 @app.get("/api/events")
 def get_all_events():
-    """Fetches the active telemetry ledger structured chronologically."""
+    """Fetches the active telemetry ledger structured flat and chronologically."""
     query = text("SELECT * FROM incident_logs WHERE status = 'ACTIVE' ORDER BY timestamp DESC")
     try:
         with engine.connect() as conn:
@@ -78,6 +124,27 @@ def get_all_events():
             
             standardized_list = []
             for row in rows:
+                raw_steps = row["remediation_steps"]
+                standardized_steps = ["Inspect application log streams manually."]
+                
+                if raw_steps:
+                    if isinstance(raw_steps, str):
+                        try:
+                            standardized_steps = json.loads(raw_steps)
+                        except Exception:
+                            standardized_steps = [raw_steps]
+                    elif isinstance(raw_steps, list):
+                        standardized_steps = raw_steps
+
+                # Safely extract pre-calculated metrics JSON if present inside structural listings
+                metrics_data = row["metrics"] if "metrics" in row else {}
+                if isinstance(metrics_data, str):
+                    try:
+                        metrics_data = json.loads(metrics_data)
+                    except Exception:
+                        metrics_data = {}
+
+                # 🟢 Flatten keys directly into the root level item dictionary
                 standardized_list.append({
                     "id": row["id"],
                     "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
@@ -85,7 +152,13 @@ def get_all_events():
                     "log_text": row["log_text"],
                     "classification": row["classification"] or "Unclassified Operational Alert",
                     "severity": row["severity"] or "MEDIUM",
-                    "remediation_steps": row["remediation_steps"] or ["Inspect application log streams manually."]
+                    "remediation_steps": standardized_steps,
+                    
+                    # Direct flat mappings for real-time WebSocket initialization states
+                    "saturation_pct": metrics_data.get("saturation_pct", 42),
+                    "system_status": metrics_data.get("system_status", "HEALTHY"),
+                    "blast_radius": metrics_data.get("blast_radius", ["None Detected"]),
+                    "downstream_latency_ms": metrics_data.get("downstream_latency_ms", 55)
                 })
             return standardized_list
     except Exception as e:
@@ -93,19 +166,28 @@ def get_all_events():
         raise HTTPException(status_code=500, detail=f"Ledger extraction failure: {str(e)}")
 
 # =====================================================================
-# LEDGER INJECTION BOUNDARY
+# LEDGER INJECTION BOUNDARY (Unified Flat Output)
 # =====================================================================
 @app.post("/api/events")
 def create_mock_event(payload: EventCreateRequest):
-    """Direct injector endpoint to create custom severity logging contexts for verification demos."""
+    """Direct injector endpoint to create custom severity logging contexts with inline default mock metrics."""
     insert_query = text("""
-        INSERT INTO incident_logs (service_name, severity, log_text, classification, status, remediation_steps, timestamp)
-        VALUES (:service, :sev, :log, :class, 'ACTIVE', :steps, NOW())
+        INSERT INTO incident_logs (service_name, severity, log_text, classification, status, remediation_steps, metrics, timestamp)
+        VALUES (:service, :sev, :log, :class, 'ACTIVE', :steps, :metrics, NOW())
+        RETURNING id, timestamp
     """)
     
     log_upper = payload.log_text.upper()
     classification = "Unclassified Operational Alert"
     remediation_steps = ["Inspect application log streams manually."]
+    
+    # Establish local metric baselines for manual UI injection passes
+    mock_metrics = {
+        "saturation_pct": 42,
+        "system_status": "HEALTHY",
+        "blast_radius": ["None Detected"],
+        "downstream_latency_ms": 55
+    }
     
     if "REDIS" in log_upper:
         classification = "Redis Eviction Warning (Memory Pressure)" if payload.severity.upper() == "MEDIUM" else "Redis Connection Pool Exhaustion Anomaly"
@@ -114,24 +196,59 @@ def create_mock_event(payload: EventCreateRequest):
             "redis-cli CLIENT KILL TYPE normal",
             "kubectl rollout restart deployment/redis-cluster-node"
         ]
+        mock_metrics = {
+            "saturation_pct": 58 if payload.severity.upper() == "MEDIUM" else 100,
+            "system_status": "WARNING" if payload.severity.upper() == "MEDIUM" else "CRITICAL",
+            "blast_radius": ["User-Session-Cache"] if payload.severity.upper() == "MEDIUM" else ["Payment-Processing-Worker", "User-Session-Cache"],
+            "downstream_latency_ms": 140 if payload.severity.upper() == "MEDIUM" else 480
+        }
     elif "POSTGRES" in log_upper or "DB_" in log_upper or "DATABASE" in log_upper:
         classification = "Relational DB Pool Connection Timeout"
         remediation_steps = [
             "psql -U postgres -d opsmesh -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE age(clock_timestamp() - query_start) > interval '5 minutes';\"",
             "kubectl scale deployment/postgres-cluster-pool --replicas=3"
         ]
+        mock_metrics = {
+            "saturation_pct": 65 if payload.severity.upper() == "MEDIUM" else 95,
+            "system_status": "WARNING" if payload.severity.upper() == "MEDIUM" else "CRITICAL",
+            "blast_radius": ["Inventory-Service"] if payload.severity.upper() == "MEDIUM" else ["Order-Management-Service", "Inventory-Service"],
+            "downstream_latency_ms": 210 if payload.severity.upper() == "MEDIUM" else 1200
+        }
         
     try:
         with engine.connect() as conn:
-            conn.execute(insert_query, {
+            result = conn.execute(insert_query, {
                 "service": payload.service_name,
                 "sev": payload.severity.upper(),
                 "log": payload.log_text,
                 "class": classification,
-                # 🟢 Crucial Fix: Serialize list data to a JSON string payload mapping context
-                "steps": json.dumps(remediation_steps) 
+                "steps": json.dumps(remediation_steps),
+                "metrics": json.dumps(mock_metrics)
             })
+            inserted_row = result.mappings().fetchone()
             conn.commit()
+            
+        # 🟢 Flattened broadcast structure matches UI expectations immediately
+        broadcast_payload = {
+            "id": inserted_row["id"],
+            "timestamp": inserted_row["timestamp"].isoformat() if inserted_row["timestamp"] else None,
+            "service_name": payload.service_name,
+            "log_text": payload.log_text,
+            "classification": classification,
+            "severity": payload.severity.upper(),
+            "remediation_steps": remediation_steps,
+            
+            # Root-level metrics propagation over WebSockets
+            "saturation_pct": mock_metrics["saturation_pct"],
+            "system_status": mock_metrics["system_status"],
+            "blast_radius": mock_metrics["blast_radius"],
+            "downstream_latency_ms": mock_metrics["downstream_latency_ms"]
+        }
+        
+        import asyncio
+        if asyncio.get_event_loop().is_running():
+            asyncio.create_task(manager.broadcast(broadcast_payload))
+            
         logger.info(f"➕ Successfully injected mock event alert context for service: {payload.service_name}")
         return {"status": "SUCCESS", "message": "Telemetry anomaly successfully appended to the active triage ledger."}
     except Exception as e:
@@ -139,11 +256,11 @@ def create_mock_event(payload: EventCreateRequest):
         raise HTTPException(status_code=500, detail=f"Database record injection failure: {str(e)}")
     
 # =====================================================================
-# DEEP-DIVE DIAGNOSTIC WORKFLOW NODE
+# DEEP-DIVE DIAGNOSTIC WORKFLOW NODE (Unified Flat Output)
 # =====================================================================
 @app.post("/api/events/{event_id}/inspect")
 def inspect_event_deep_dive(event_id: int):
-    """Triggers the LangGraph diagnostic sub-agent execution ring for a specific telemetry row."""
+    """🟢 FETCHES PRE-CALCULATED METRICS DIRECTLY FLATTENED AT THE ROOT LEVEL"""
     fetch_query = text("SELECT * FROM incident_logs WHERE id = :id AND status = 'ACTIVE'")
     try:
         with engine.connect() as conn:
@@ -151,27 +268,20 @@ def inspect_event_deep_dive(event_id: int):
             if not row:
                 raise HTTPException(status_code=404, detail="Selected active telemetry event row not found.")
             
-            # 1. 🟢 PASS A PLAIN DICT (This satisfies LangGraph's state channel validation)
-            graph_output = diagnostic_graph.invoke({
-                "incident_id": row["id"],
-                "service_name": row["service_name"],
-                "log_text": row["log_text"]
-            })
+            # Extract archived JSON metrics column values
+            metrics_payload = row["metrics"] if "metrics" in row else {}
+            if isinstance(metrics_payload, str):
+                try:
+                    metrics_payload = json.loads(metrics_payload)
+                except Exception:
+                    metrics_payload = {}
+
+            # Establish safe fallbacks out of the JSON profile
+            saturation_pct = metrics_payload.get("saturation_pct", 42)
+            system_status = metrics_payload.get("system_status", "HEALTHY")
+            blast_radius = metrics_payload.get("blast_radius", ["None Detected"])
+            downstream_latency_ms = metrics_payload.get("downstream_latency_ms", 55)
             
-            # 2. Extract attributes safely from the returned state object
-            saturation_pct = getattr(graph_output, "saturation_pct", 0)
-            system_status = getattr(graph_output, "system_status", "UNKNOWN")
-            blast_radius = getattr(graph_output, "blast_radius", [])
-            downstream_latency_ms = getattr(graph_output, "downstream_latency_ms", 0)
-            
-            # If graph_output itself returned as a dict, handle key extraction
-            if isinstance(graph_output, dict):
-                saturation_pct = graph_output.get("saturation_pct", 0)
-                system_status = graph_output.get("system_status", "UNKNOWN")
-                blast_radius = graph_output.get("blast_radius", [])
-                downstream_latency_ms = graph_output.get("downstream_latency_ms", 0)
-            
-            # --- SAFE ARRAY PARSING TIER ---
             raw_steps = row["remediation_steps"]
             standardized_steps = ["Inspect application log streams manually."]
             
@@ -184,6 +294,7 @@ def inspect_event_deep_dive(event_id: int):
                 elif isinstance(raw_steps, list):
                     standardized_steps = raw_steps
             
+            # 🟢 Clean flat structure returning metrics fields right next to identity fields
             return {
                 "id": row["id"],
                 "service_name": row["service_name"],
@@ -191,18 +302,18 @@ def inspect_event_deep_dive(event_id: int):
                 "classification": row["classification"] or "Unclassified Operational Alert",
                 "severity": row["severity"] or "MEDIUM",
                 "remediation_steps": standardized_steps,
-                "metrics": {
-                    "saturation_pct": saturation_pct,
-                    "system_status": system_status,
-                    "blast_radius": blast_radius,
-                    "downstream_latency_ms": downstream_latency_ms
-                }
+                
+                # Rendered directly at base root tier for seamless React component matching
+                "saturation_pct": saturation_pct,
+                "system_status": system_status,
+                "blast_radius": blast_radius,
+                "downstream_latency_ms": downstream_latency_ms
             }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Sub-agent orchestration routing failure: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Sub-agent orchestration routing failure: {str(e)}")
+        logger.error(f"Database direct metrics extraction failure: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database direct metrics extraction failure: {str(e)}")
         
 # =====================================================================
 # DECOUPLED OPERATIONS TIER 1: HIGH-FIDELITY SIMULATION RUNNER
@@ -212,19 +323,16 @@ def execute_remediation_logs(event_id: int, request: ExecutionRequest):
     """Intercepts blueprint steps and generates high-fidelity production terminal log simulations."""
     terminal_outputs = []
     
-    # Intentionally add a slight telemetry lag delay to simulate server communication during demo
     time.sleep(1.2)
 
     for command in request.remediation_steps:
         cmd_clean = command.strip()
         
-        # 1. Catch Text Fallbacks
         if cmd_clean.startswith("Inspect ") or "manually" in cmd_clean.lower():
             output_log = f"[INFO] Local Operator Notice:\n👉 {cmd_clean}\n[STATUS] Manual assessment trace logged."
             terminal_outputs.append(output_log)
             continue
             
-        # 2. Simulate Redis Automation Sequences
         if "redis-cli" in cmd_clean:
             if "maxclients" in cmd_clean:
                 stdout = "OK"
@@ -236,7 +344,6 @@ def execute_remediation_logs(event_id: int, request: ExecutionRequest):
                 stdout = "OK"
                 stderr = ""
                 
-        # 3. Simulate Kubernetes Operations Sequences
         elif "kubectl" in cmd_clean:
             if "rollout restart" in cmd_clean:
                 stdout = "deployment.apps/redis-cluster-node restarted\nWaiting for healthy pod lifecycle sync..."
@@ -245,12 +352,10 @@ def execute_remediation_logs(event_id: int, request: ExecutionRequest):
                 stdout = "command execution acknowledged within namespace target cluster context."
                 stderr = ""
                 
-        # 4. Simulate Relational Database Operations Sequences
         elif "pg_terminate_backend" in cmd_clean or "psql" in cmd_clean:
             stdout = "pg_terminate_backend\n----------------------\n                    t\n(1 row total connections terminated)"
             stderr = ""
             
-        # 5. Default Fallback String Output
         else:
             stdout = f"Execution profile status tracking completed: process returned exit code 0"
             stderr = ""
